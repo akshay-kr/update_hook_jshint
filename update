@@ -1,0 +1,72 @@
+#!/bin/bash
+
+# --- Command line
+refname="$1"
+oldrev="$2"
+newrev="$3"
+refex="$7"
+branch=${refname#refs/heads/}
+
+# Make a temp directory for writing the .jshintrc file
+TMP_DIR=`mktemp -d`
+EXIT_CODE=0
+
+# If commit was on the master branch
+if [ "$branch" == "master" ]
+then
+  # See if the git repo has a .jshintrc file
+  JSHINTRC=`git ls-tree --full-tree --name-only -r HEAD -- | egrep .jshintrc`
+
+  JSHINT="jshint"
+  if [ -n "$JSHINTRC" ]
+  then
+    # Create a path to a temp .jshintrc file
+    JSHINTRC_FILE="$TMP_DIR/`basename \"$JSHINTRC\"`"
+
+    # Write the repo file to the temp location
+    git cat-file blob HEAD:$JSHINTRC > $JSHINTRC_FILE
+
+    # Update the JSHint command to use the configuration file
+    JSHINT="$JSHINT --config=$JSHINTRC_FILE"
+  fi
+  
+  # Error flag.
+  error = false
+  # Check all of the .js files that changed between oldrev and newrev
+  # Git diff --diff-filter
+  for FILE in `git diff --diff-filter=ACM --name-only -r ${oldrev} ${newrev} -- | egrep *.js`; do
+    # Get just the path of the file
+    FILE_PATH=`dirname ${FILE}`
+
+    # Join that with the tmp directory; make if it does not exist
+    FULL_PATH=${TMP_DIR}/${FILE_PATH}
+    mkdir -p ${FULL_PATH}
+
+    # Write the file from Git
+    git cat-file blob ${newrev}:${FILE} > "$TMP_DIR/$FILE"
+
+    # Run JSHint on the file and redirect the output back to Git
+    ${JSHINT} ${TMP_DIR}/${FILE} >&2
+
+    # Capture the exit status of last command
+    EXIT_CODE=$((${EXIT_CODE} + $?))
+
+    # If the EXIT_CODE is not 0 fail
+    if [[ $EXIT_CODE -ne 0 ]]
+    then
+      rm -rf ${TMP_DIR}
+      error = true
+    fi
+  done
+
+  if $error
+  then
+      exit 1
+  fi
+
+  # Clean-up the created files
+  rm -rf ${TMP_DIR}
+fi
+
+# Not updating master
+exit 0
